@@ -1,3 +1,10 @@
+// Infrared Mirror
+//
+// Reuben Strangelove
+// Winter 2020
+//
+
+
 #include "Arduino.h"
 #include "SPI.h"
 #include <Adafruit_MLX90640.h>
@@ -56,8 +63,8 @@ void setup()
 
   Serial.println("Found Adafruit MLX90640.");
 
-  mlx.setMode(MLX90640_CHESS);           // or MLX90640_INTERLEAVED
-  mlx.setResolution(MLX90640_ADC_18BIT); // or 16, 17, 18, 19
+  mlx.setMode(MLX90640_CHESS);           // MLX90640_CHESS or MLX90640_INTERLEAVED
+  mlx.setResolution(MLX90640_ADC_18BIT); // 16, 17, 18, 19
   mlx.setRefreshRate(MLX90640_16_HZ);    // Modification was required in the library to increase I2C speed.
 }
 
@@ -66,9 +73,9 @@ void loop()
   //stripMotion.setPixelColor(0, Color(255, 0, 0));
   // stripMotion.show();
 
-  //MatrixEffect();
+  MatrixEffect();
 
-  UpdateMLX90640();
+  //UpdateMLX90640();
 }
 
 bool UpdateMLX90640()
@@ -109,17 +116,12 @@ bool UpdateMLX90640()
         if (minTemperature > temperature)
           minTemperature = temperature;
       }
-
       if (maxTemperature < temperature)
-        maxTemperature = temperature;
+        maxTemperature = temperature;         
 
-      //float temperature = frame[(y - 24) + (x * 32)]; // camera is rotated
-
-      CRGB color;
-
-      const int red[] =   { 0,  0,  0,      0,   0,  0, 16,   32,   64, 92, 127, 192,  252, 255, 255, 127, 192};
-      const int green[] = { 0,  0,  0,      0,   0,   0,  0,    0,    0,   0,   0,   0,  0,     0,   0, 127, 192};
-      const int blue[] =  {8, 16, 32, 64, 127, 192, 255, 192, 127,   64,   32,  0,   0,     0,   0, 127, 192};
+      const int red[] = {0, 0, 0, 0, 0, 0, 16, 32, 64, 92, 127, 192, 252, 255, 255, 255, 255};
+      const int green[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 212};
+      const int blue[] = {8, 16, 32, 64, 127, 192, 255, 192, 127, 64, 32, 0, 0, 0, 0, 127, 212};
 
       int index = round(temperature - 20);
       if (index < 0)
@@ -130,12 +132,8 @@ bool UpdateMLX90640()
       {
         index = 16;
       }
-
-   
-
-      color = CRGB(red[index], green[index], blue[index]);
-
-       leds[getIndexOfPixel(x, y)] = color;
+     
+      leds[getIndexOfPixel(x, y)] = CRGB(red[index], green[index], blue[index]);
     }
   }
 
@@ -187,7 +185,10 @@ void MatrixEffect()
   }
 }
 
-// Convert x/y cordinates pixel index inside the matrix of matrix
+
+// Convert x/y cordinates into pixel index inside the matrix of matrix.
+// x/y cordinates are expected to start in the upper left and end in the lower right.
+// Matrix of matrix consists of 12 8x8 LED matrix.
 // Matrix order (11 upper left, 0 lower right):
 // 11  10   9
 //  8   7   6
@@ -206,20 +207,6 @@ uint16_t getIndexOfPixel(int x, int y)
   int yL = 7 - (y % 8);
   uint16_t pixel = (uint16_t)(64 * matrixIndex + (xL + (8 * yL)));
 
-  Serial.println(pixel);
-
-  /*
-   pixel =  x + y * 24;
-
-    uint16_t xMatrix = (i % 24) / 8;
-    uint16_t yMatrix = i / (64 * 3);    
-    uint16_t matrixIndex = 11 - (xMatrix + 3 * yMatrix);
-
-    // inside matrix x, y
-    uint16_t xL = 7 - ((i % 24) % 8);
-    uint16_t yL = 7 - (i / 24) % 8;
-    uint16_t pixel = 64 * matrixIndex + (xL + (8 * yL)); 
-    */
   return pixel;
 }
 
