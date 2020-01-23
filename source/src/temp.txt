@@ -1,0 +1,42 @@
+//Rextester.Program.Main is the entry point for your code. Don't change it.
+//Compiler version 4.0.30319.17929 for Microsoft (R) .NET Framework 4.5
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
+
+namespace Rextester
+{
+    public class Program
+    {
+        public static void Main(string[] args)
+        {            
+            int i = 48;         
+            
+            int xMatrix = (i % 24) / 8;            
+            Console.WriteLine("xMatrix: " + xMatrix);
+            
+            int yMatrix = i / (64 * 3);            
+            Console.WriteLine("yMatrix: " + yMatrix);
+            
+            // matrix index (see diagram)
+            int matrixIndex = 11 - (xMatrix + 3 * yMatrix);            
+            Console.WriteLine("Matrix index: " + matrixIndex);
+                        
+            // inside matrix x, y
+            int x = 7 - ((i % 24) % 8);            
+            Console.WriteLine("x: " + x);
+             int y = 7 - (i / 24) % 8;            
+            Console.WriteLine("y: " + y);
+            
+            //int pixelIndexInsideMatrix = (i / 32) % 8;            
+            //Console.WriteLine("pixelIndexInsideMatrix: " + pixelIndexInsideMatrix);
+            
+            int pixel = (x + (8 * y));            
+            Console.WriteLine("pixel: " + pixel); 
+            
+            
+        }
+    }
+}
