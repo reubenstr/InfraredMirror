@@ -4,20 +4,18 @@
 // Winter 2020
 //
 
-
 #include "Arduino.h"
 #include "SPI.h"
 #include <Adafruit_MLX90640.h>
 #include <Adafruit_NeoPixel.h>
-#include <main.h>
 #include <math.h>
-
 #include <FastLED.h>
+#include <main.h>
 
 #define kMatrixWidth 24
 #define kMatrixHeight 32
+
 #define NUM_LEDS 768
-uint8_t ledBrightness = 192;
 CRGB leds[NUM_LEDS];
 CRGB motionLed[1];
 
@@ -27,15 +25,23 @@ float frame[32 * 24]; // buffer for full frame of temperatures
 #define PIN_LED_STRIP_GRID 8
 #define PIN_LED_STRIP_NAMEPLATE 9
 #define PIN_LED_STRIP_MOTION 10
+#define PIN_BRIGHTNESS_POT A0
 
 Adafruit_NeoPixel stripMotion = Adafruit_NeoPixel(1, PIN_LED_STRIP_MOTION, NEO_GRB + NEO_KHZ800);
+
+// NoiseEffect variables.
+#define MAX_DIMENSION ((kMatrixWidth > kMatrixHeight) ? kMatrixWidth : kMatrixHeight)
+uint16_t speed = 20; // 1 very slow, or 60 for fast water.
+uint16_t scale = 30; // A value of 1 will be so zoomed in, you'll mostly see solid colors.
+uint8_t colorLoop = 1;
+uint8_t noise[MAX_DIMENSION][MAX_DIMENSION];
+CRGBPalette16 currentPalette(PartyColors_p);
 
 void setup()
 {
 
-  // LED Init
   FastLED.addLeds<NEOPIXEL, PIN_LED_STRIP_GRID>(leds, NUM_LEDS).setDither(0);
-  FastLED.setBrightness(ledBrightness);
+  FastLED.setBrightness(0);
   FastLED.show();
 
   stripMotion.begin();
@@ -70,12 +76,30 @@ void setup()
 
 void loop()
 {
+
+  
+  int ledBrightness = map(analogRead(PIN_BRIGHTNESS_POT), 1024, 0, 1, 255);
+FastLED.setBrightness(ledBrightness);
+
+
+
+
   //stripMotion.setPixelColor(0, Color(255, 0, 0));
   // stripMotion.show();
 
-  MatrixEffect();
+  //MatrixEffect();
 
   //UpdateMLX90640();
+
+  noiseEffect();
+
+  
+  
+
+
+
+
+
 }
 
 bool UpdateMLX90640()
@@ -117,7 +141,7 @@ bool UpdateMLX90640()
           minTemperature = temperature;
       }
       if (maxTemperature < temperature)
-        maxTemperature = temperature;         
+        maxTemperature = temperature;
 
       const int red[] = {0, 0, 0, 0, 0, 0, 16, 32, 64, 92, 127, 192, 252, 255, 255, 255, 255};
       const int green[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 212};
@@ -132,14 +156,14 @@ bool UpdateMLX90640()
       {
         index = 16;
       }
-     
+
       leds[getIndexOfPixel(x, y)] = CRGB(red[index], green[index], blue[index]);
     }
   }
 
-  Serial.print(minTemperature);
-  Serial.print(" | ");
-  Serial.println(maxTemperature);
+  // Serial.print(minTemperature);
+  // Serial.print(" | ");
+  // Serial.println(maxTemperature);
 
   FastLED.show();
   return statusFlag;
@@ -185,7 +209,6 @@ void MatrixEffect()
   }
 }
 
-
 // Convert x/y cordinates into pixel index inside the matrix of matrix.
 // x/y cordinates are expected to start in the upper left and end in the lower right.
 // Matrix of matrix consists of 12 8x8 LED matrix.
@@ -208,6 +231,200 @@ uint16_t getIndexOfPixel(int x, int y)
   uint16_t pixel = (uint16_t)(64 * matrixIndex + (xL + (8 * yL)));
 
   return pixel;
+}
+
+// Noise Effect Functions
+void noiseEffect()
+{
+
+  ChangePaletteAndSettingsPeriodically();
+
+  // The 16 bit version of our coordinates
+  static uint16_t x = random16();
+  static uint16_t y = random16();
+  static uint16_t z = random16();
+
+  // Smooth out artifacts at low speeds.
+  uint8_t dataSmoothing = 0;
+  if (speed < 50)
+  {
+    dataSmoothing = 200 - (speed * 4);
+  }
+
+  for (int i = 0; i < MAX_DIMENSION; i++)
+  {
+    int ioffset = scale * i;
+
+    for (int j = 0; j < MAX_DIMENSION; j++)
+    {
+      int joffset = scale * j;
+
+      uint8_t data = inoise8(x + ioffset, y + joffset, z);
+
+      // The range of the inoise8 function is roughly 16-238.
+      // These two operations expand those values out to roughly 0..255
+      // You can comment them out if you want the raw noise data.
+      data = qsub8(data, 16);
+      data = qadd8(data, scale8(data, 39));
+
+      if (dataSmoothing)
+      {
+        uint8_t olddata = noise[i][j];
+        uint8_t newdata = scale8(olddata, dataSmoothing) + scale8(data, 256 - dataSmoothing);
+        data = newdata;
+      }
+
+      noise[i][j] = data;
+    }
+  }
+
+  z += speed;
+
+  // apply slow drift to X and Y, just for visual variation.
+  x += speed / 8;
+  y -= speed / 16;
+
+  mapNoiseToLEDsUsingPalette();
+}
+
+void mapNoiseToLEDsUsingPalette()
+{
+  static uint8_t ihue = 0;
+
+  for (int i = 0; i < kMatrixWidth; i++)
+  {
+    for (int j = 0; j < kMatrixHeight; j++)
+    {
+      uint8_t index = noise[j][i];
+      uint8_t bri = noise[i][j];
+
+      if (colorLoop)
+      {
+        index += ihue;
+      }
+
+      // brighten up.
+      if (bri > 127)
+      {
+        bri = 255;
+      }
+      else
+      {
+        bri = dim8_raw(bri * 2);
+      }
+
+      CRGB color = ColorFromPalette(currentPalette, index, bri);
+      leds[getIndexOfPixel(i, j)] = color;
+    }
+  }
+
+  ihue += 1;
+
+  FastLED.show();
+}
+
+void ChangePaletteAndSettingsPeriodically()
+{
+  static int noiseColors = 0;
+
+  EVERY_N_SECONDS(5)
+  {
+    noiseColors++;
+    if (noiseColors > 8)
+      noiseColors = 0;
+
+    if (noiseColors == 0)
+    {
+      currentPalette = RainbowColors_p;
+      speed = 15;
+      scale = 30;
+      colorLoop = 1;
+    }
+    else if (noiseColors == 1)
+    {
+      SetupPurpleAndGreenPalette();
+      speed = 15;
+      scale = 50;
+      colorLoop = 1;
+    }
+    else if (noiseColors == 2)
+    {
+      currentPalette = CloudColors_p;
+      speed = 15;
+      scale = 30;
+      colorLoop = 0;
+    }
+    else if (noiseColors == 3)
+    {
+      currentPalette = LavaColors_p;
+      speed = 15;
+      scale = 50;
+      colorLoop = 0;
+    }
+    else if (noiseColors == 4)
+    {
+      currentPalette = PartyColors_p;
+      speed = 15;
+      scale = 30;
+      colorLoop = 1;
+    }
+    else if (noiseColors == 5)
+    {
+      SetupRandomPalette();
+      speed = 15;
+      scale = 20;
+      colorLoop = 1;
+    }
+    else if (noiseColors == 6)
+    {
+      SetupRandomPalette();
+      speed = 15;
+      scale = 50;
+      colorLoop = 1;
+    }
+    else if (noiseColors == 7)
+    {
+      SetupRandomPalette();
+      speed = 50;
+      scale = 90;
+      colorLoop = 1;
+    }
+    else if (noiseColors == 8)
+    {
+      currentPalette = RainbowStripeColors_p;
+      speed = 15;
+      scale = 20;
+      colorLoop = 1;
+    }
+  }
+}
+
+// This function generates a random palette that's a gradient
+// between four different colors.  The first is a dim hue, the second is
+// a bright hue, the third is a bright pastel, and the last is
+// another bright hue.  This gives some visual bright/dark variation
+// which is more interesting than just a gradient of different hues.
+void SetupRandomPalette()
+{
+  currentPalette = CRGBPalette16(
+      CHSV(random8(), 255, 32),
+      CHSV(random8(), 255, 255),
+      CHSV(random8(), 128, 255),
+      CHSV(random8(), 255, 255));
+}
+
+// This function sets up a palette of purple and green stripes.
+void SetupPurpleAndGreenPalette()
+{
+  CRGB purple = CHSV(HUE_PURPLE, 255, 255);
+  CRGB green = CHSV(HUE_GREEN, 255, 255);
+  CRGB black = CRGB::Black;
+
+  currentPalette = CRGBPalette16(
+      green, green, black, black,
+      purple, purple, black, black,
+      green, green, black, black,
+      purple, purple, black, black);
 }
 
 /*
