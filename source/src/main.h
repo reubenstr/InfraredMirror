@@ -3,7 +3,7 @@
 
 
 
-
+bool checkForTriggerActionOnPot(int adcValue);
 
 bool UpdateMLX90640();
 

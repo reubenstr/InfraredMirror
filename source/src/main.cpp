@@ -1,8 +1,15 @@
-// Infrared Mirror
+// InfraredHeatColor Mirror
+//
+// Displays infraredHeatColor camara image using a matrix of LEDs.
 //
 // Reuben Strangelove
 // Winter 2020
 //
+// MCU: Teensy 3.2 requiredHeatColor for speed and memory capacity.
+// SENSOR: Adafruit MLX90640 over I2C.
+//
+// Notes: Double tap brigthness pot into zero postion (min brightness) to
+//        enter into animation mode display noise effects on the led matrix.
 
 #include "Arduino.h"
 #include "SPI.h"
@@ -12,24 +19,22 @@
 #include <FastLED.h>
 #include <main.h>
 
+// LED matrix and LED strips parameters.
 #define kMatrixWidth 24
 #define kMatrixHeight 32
-
-#define NUM_LEDS 768
-CRGB leds[NUM_LEDS];
-CRGB motionLed[1];
-
-Adafruit_MLX90640 mlx;
-float frame[32 * 24]; // buffer for full frame of temperatures
+#define NUM_LEDS_IN_LED_MATRIX 768
+CRGB leds[NUM_LEDS_IN_LED_MATRIX];
+#define NUM_LEDS_IN_NAMEPLATE 12
 
 #define PIN_LED_STRIP_GRID 8
 #define PIN_LED_STRIP_NAMEPLATE 9
 #define PIN_LED_STRIP_MOTION 10
 #define PIN_BRIGHTNESS_POT A0
 
+Adafruit_NeoPixel stripNameplate = Adafruit_NeoPixel(NUM_LEDS_IN_NAMEPLATE, PIN_LED_STRIP_NAMEPLATE, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel stripMotion = Adafruit_NeoPixel(1, PIN_LED_STRIP_MOTION, NEO_GRB + NEO_KHZ800);
 
-// NoiseEffect variables.
+// NoiseEffect parameters.
 #define MAX_DIMENSION ((kMatrixWidth > kMatrixHeight) ? kMatrixWidth : kMatrixHeight)
 uint16_t speed = 20; // 1 very slow, or 60 for fast water.
 uint16_t scale = 30; // A value of 1 will be so zoomed in, you'll mostly see solid colors.
@@ -37,21 +42,38 @@ uint8_t colorLoop = 1;
 uint8_t noise[MAX_DIMENSION][MAX_DIMENSION];
 CRGBPalette16 currentPalette(PartyColors_p);
 
+// Adafruit MLX90640 parameters.
+Adafruit_MLX90640 mlx;
+float temperatureFrame[32 * 24];
+
+// Heat colors. (still needs tweaking)
+const int redHeatColor[] = {0, 0, 0, 0, 0, 0, 16, 32, 64, 92, 127, 192, 252, 255, 255, 255, 255};
+const int greenHeatColor[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 192};
+const int blueHeatColor[] = {8, 16, 32, 64, 127, 192, 255, 192, 127, 64, 32, 0, 0, 0, 0, 127, 192};
+
+enum state
+{
+  DisplayTemperature,
+  DisplayAnimations
+} State;
+
+
 void setup()
 {
-
-  FastLED.addLeds<NEOPIXEL, PIN_LED_STRIP_GRID>(leds, NUM_LEDS).setDither(0);
+  FastLED.addLeds<NEOPIXEL, PIN_LED_STRIP_GRID>(leds, NUM_LEDS_IN_LED_MATRIX).setDither(0);
   FastLED.setBrightness(0);
   FastLED.show();
+
+  stripNameplate.begin();
+  stripNameplate.setBrightness(127);
+  stripNameplate.show();
 
   stripMotion.begin();
   stripMotion.setBrightness(127);
   stripMotion.show();
 
-  //while (!Serial)
-  //  delay(10);
   Serial.begin(115200);
-  Serial.println("Infrared Mirror startup...");
+  Serial.println("InfraredHeatColor Mirror startup...");
 
   if (!mlx.begin(MLX90640_I2CADDR_DEFAULT, &Wire))
   {
@@ -71,35 +93,76 @@ void setup()
 
   mlx.setMode(MLX90640_CHESS);           // MLX90640_CHESS or MLX90640_INTERLEAVED
   mlx.setResolution(MLX90640_ADC_18BIT); // 16, 17, 18, 19
-  mlx.setRefreshRate(MLX90640_16_HZ);    // Modification was required in the library to increase I2C speed.
+  mlx.setRefreshRate(MLX90640_16_HZ);    // Modification was requiredHeatColor in the library to increase I2C speed.
+
+  State = DisplayTemperature;
+
+  // Start up name plate animation.
+  for (int i = 0; i < NUM_LEDS_IN_NAMEPLATE; i++)
+  {
+    int colorIndex = i + 4;
+     stripNameplate.setPixelColor(NUM_LEDS_IN_NAMEPLATE - i - 1, Color(redHeatColor[colorIndex], greenHeatColor[colorIndex], blueHeatColor[colorIndex]));    
+     stripNameplate.show();
+      delay(75);
+  } 
 }
 
 void loop()
 {
+  int adcValue = 1023 - analogRead(PIN_BRIGHTNESS_POT);
+  int ledBrightness = map(adcValue, 0, 1024, 1, 255);
+  FastLED.setBrightness(ledBrightness);
 
-  
-  int ledBrightness = map(analogRead(PIN_BRIGHTNESS_POT), 1024, 0, 1, 255);
-FastLED.setBrightness(ledBrightness);
+  if (checkForTriggerActionOnPot(adcValue))
+  {
+    State = DisplayAnimations;
+  }
 
+  if (State == DisplayTemperature)
+  {
+    UpdateMLX90640();
+  }
+  else if (State == DisplayAnimations)
+  {
+    // MatrixEffect();
+    noiseEffect();
+  }
+}
 
+// Detect if user taps pot far left multiple times (taps to zero value).
+bool checkForTriggerActionOnPot(int adcValue)
+{
+  static int tapCount = 0;
+  static unsigned long atHighMillis = 0;
+  static bool newAtZeroFlag = false;
 
+  if (adcValue == 0)
+  {
+    if (newAtZeroFlag == true)
+    {
+      newAtZeroFlag = false;
+      tapCount++;
+      if (tapCount == 2)
+      {
+        return true;
+      }
+    }
+    atHighMillis = millis();
+  }
 
-  //stripMotion.setPixelColor(0, Color(255, 0, 0));
-  // stripMotion.show();
-
-  //MatrixEffect();
-
-  //UpdateMLX90640();
-
-  noiseEffect();
-
-  
-  
-
-
-
-
-
+  if (adcValue > 20)
+  {
+    if (millis() > (atHighMillis + 1500))
+    {
+      newAtZeroFlag = false;
+      tapCount = 0;
+    }
+    else
+    {
+      newAtZeroFlag = true;
+    }
+  }
+  return false;
 }
 
 bool UpdateMLX90640()
@@ -112,12 +175,12 @@ bool UpdateMLX90640()
     statusFlag = false;
   }
 
-  if (mlx.getFrame(frame) != 0)
+  if (mlx.getFrame(temperatureFrame) != 0)
   {
     return statusFlag;
   }
 
-  // Data received: apply frame to led grid.
+  // Data received success: apply frame to led grid.
 
   statusFlag = true;
   oldMillis = millis();
@@ -133,8 +196,9 @@ bool UpdateMLX90640()
       // the pixels by the matrix represented as an array.
       int xRotated = 32 - y;
       int yRotated = x;
-      float temperature = frame[xRotated + yRotated * 32];
+      float temperature = temperatureFrame[xRotated + yRotated * 32];
 
+      // Store min and max temperature for debugging.
       if (temperature > 15)
       {
         if (minTemperature > temperature)
@@ -143,10 +207,7 @@ bool UpdateMLX90640()
       if (maxTemperature < temperature)
         maxTemperature = temperature;
 
-      const int red[] = {0, 0, 0, 0, 0, 0, 16, 32, 64, 92, 127, 192, 252, 255, 255, 255, 255};
-      const int green[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 212};
-      const int blue[] = {8, 16, 32, 64, 127, 192, 255, 192, 127, 64, 32, 0, 0, 0, 0, 127, 212};
-
+      // Convert temperature into heat color index.
       int index = round(temperature - 20);
       if (index < 0)
       {
@@ -157,7 +218,7 @@ bool UpdateMLX90640()
         index = 16;
       }
 
-      leds[getIndexOfPixel(x, y)] = CRGB(red[index], green[index], blue[index]);
+      leds[getIndexOfPixel(x, y)] = CRGB(redHeatColor[index], greenHeatColor[index], blueHeatColor[index]);
     }
   }
 
@@ -171,7 +232,6 @@ bool UpdateMLX90640()
 
 void MatrixEffect()
 {
-
   EVERY_N_MILLIS(75) // falling speed
   {
     const CRGB spawnColor = CRGB(125, 255, 125);
@@ -192,7 +252,7 @@ void MatrixEffect()
     }
 
     // fade all leds
-    for (int i = 0; i < NUM_LEDS; i++)
+    for (int i = 0; i < NUM_LEDS_IN_LED_MATRIX; i++)
     {
       if (leds[i].g != spawnColor.g)
         leds[i].nscale8(192); // only fade trail
@@ -210,7 +270,8 @@ void MatrixEffect()
 }
 
 // Convert x/y cordinates into pixel index inside the matrix of matrix.
-// x/y cordinates are expected to start in the upper left and end in the lower right.
+// x/y cordinates of the data to be displated are expected to start in the upper left corner
+// and end in the lower right corner.
 // Matrix of matrix consists of 12 8x8 LED matrix.
 // Matrix order (11 upper left, 0 lower right):
 // 11  10   9
@@ -218,6 +279,7 @@ void MatrixEffect()
 //  5   4   3
 //  2   1   0
 // Pixels start on the lower right of each matrix and end in the upper left.
+// LEDs within the 8x8 matrix do not zig-zag.
 uint16_t getIndexOfPixel(int x, int y)
 {
 
@@ -413,7 +475,7 @@ void SetupRandomPalette()
       CHSV(random8(), 255, 255));
 }
 
-// This function sets up a palette of purple and green stripes.
+// This function sets up a palette of purple and greenHeatColor stripes.
 void SetupPurpleAndGreenPalette()
 {
   CRGB purple = CHSV(HUE_PURPLE, 255, 255);
@@ -427,27 +489,6 @@ void SetupPurpleAndGreenPalette()
       purple, purple, black, black);
 }
 
-/*
-
-// Input a value 0 to 255 to get a color value.
-// The colours are a transition r - g - b - back to r.
-uint32_t Wheel(byte WheelPos)
-{
-  WheelPos = 255 - WheelPos;
-  if (WheelPos < 85)
-  {
-    return stripMotion.Color(255 - WheelPos * 3, 0, WheelPos * 3);
-  }
-  if (WheelPos < 170)
-  {
-    WheelPos -= 85;
-    return stripMotion.Color(0, WheelPos * 3, 255 - WheelPos * 3);
-  }
-  WheelPos -= 170;
-  return stripMotion.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
-}
-
-*/
 // Pack color data into 32 bit unsigned int (copied from Neopixel library).
 uint32_t Color(uint8_t r, uint8_t g, uint8_t b)
 {
