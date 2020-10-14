@@ -9,10 +9,9 @@
   MCU: Teensy 3.2 (required for speed, memory capacity, and library support).
   SENSOR: Adafruit MLX90640 over I2C.
 
-  Notes: Double tap brightness pot into zero postion (min brightness) to
-          enter into animation mode that displays noise effects on the led matrix.
-
-          LED brightness limited in software due to LED panel overheating issues.
+  Notes: LED brightness limited in software due to LED panel overheating issues.
+         Animation mode is clunky (low FPS) due to blocking nature of getting the temperature frame.
+         The MLX90640 library is only able to achive a 16hz refresh rate.
 
 
   Library notes: In order to use 16hz refresh rate a line needed to be added to the MLX60640 library.
@@ -23,7 +22,7 @@
 
 #include "Arduino.h"
 #include "SPI.h"
-#include <Adafruit_MLX90640.h>
+#include <Adafruit_MLX90640.h> // https://github.com/adafruit/Adafruit_MLX90640
 #include <Adafruit_NeoPixel.h>
 #include <math.h>
 #include <FastLED.h>
@@ -64,8 +63,6 @@ float temperatureFrame[32 * 24];
 const int redHeatColor[] = {0, 0, 0, 0, 0, 0, 16, 32, 64, 92, 127, 192, 252, 255, 255, 255, 255};
 const int greenHeatColor[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 192};
 const int blueHeatColor[] = {8, 16, 32, 64, 127, 192, 255, 192, 127, 64, 32, 0, 0, 0, 0, 127, 192};
-
-int cumTempInsideMatrix[12];
 
 #define RED 0xFF0000
 #define GREEN 0x00FF00
@@ -113,15 +110,14 @@ void setup()
 
   mlx.setMode(MLX90640_CHESS);           // MLX90640_CHESS or MLX90640_INTERLEAVED
   mlx.setResolution(MLX90640_ADC_16BIT); // 16, 17, 18, 19
-  mlx.setRefreshRate(MLX90640_16_HZ);    // Modification was required in the library to increase I2C speed, see top comments.
-
-  // State = DisplayAnimations; // TEMP
+  mlx.setRefreshRate(MLX90640_16_HZ);    // Modification is required to the MLX90640 library to increase I2C speed, see top comments.
 
   // Start up name plate animation.
-  for (int i = 0; i < NUM_LEDS_IN_NAMEPLATE; i++)
+  for (int i = 0; i < stripNameplate.numPixels(); i++)
   {
-    int colorIndex = i + 4;
-    stripNameplate.setPixelColor(NUM_LEDS_IN_NAMEPLATE - i - 1, Color(redHeatColor[colorIndex], greenHeatColor[colorIndex], blueHeatColor[colorIndex]));
+    int colorIndex = 5 + i;
+    stripNameplate.setPixelColor(stripNameplate.numPixels() - 1 - i, Color(redHeatColor[colorIndex], greenHeatColor[colorIndex], blueHeatColor[colorIndex]));
+
     stripNameplate.show();
     delay(75);
   }
@@ -129,9 +125,8 @@ void setup()
 
 void loop()
 {
-
+  // Display animations when no motion is detected for x milliseconds.
   static msTimer noMotionTimer(15000);
-
   if (noMotionTimer.elapsed())
   {
     State = DisplayAnimations;
@@ -142,75 +137,35 @@ void loop()
   int ledBrightness = map(adcValue, 0, 1024, 1, MAX_LED_MATRIX_BRIGHTNESS);
   FastLED.setBrightness(ledBrightness);
 
-  if (checkForTriggerActionOnPot(adcValue))
+  if (!GetTemperatureFrame())
   {
-    State = DisplayAnimations;
+    SetMotionLED(RED);
+  }
+
+  if (DetectMotion())
+  {
+    State = DisplayTemperature;
+    SetMotionLED(GREEN);
+    noMotionTimer.resetDelay();
+  }
+  else
+  {
+    SetMotionLED(OFF);
   }
 
   if (State == DisplayTemperature)
   {
-    if (UpdateMLX90640())
-    {
-      if (DetectMotion())
-      {
-        SetMotionLED(GREEN);
-        noMotionTimer.resetDelay();
-      }
-      else
-      {
-        SetMotionLED(OFF);
-      }
-    }
-    else
-    {
-      // Error
-      SetMotionLED(RED);
-    }
+    ApplyTemperatureFrameToLEDs();
   }
   else if (State == DisplayAnimations)
   {
-    MatrixEffect();
-    //noiseEffect();
+    //MatrixEffect();
+    noiseEffect();
   }
 }
 
-// Detect if user taps pot far left multiple times (taps to zero value).
-bool checkForTriggerActionOnPot(int adcValue)
-{
-  static int tapCount = 0;
-  static unsigned long atHighMillis = 0;
-  static bool newAtZeroFlag = false;
-
-  if (adcValue == 0)
-  {
-    if (newAtZeroFlag == true)
-    {
-      newAtZeroFlag = false;
-      tapCount++;
-      if (tapCount == 2)
-      {
-        return true;
-      }
-    }
-    atHighMillis = millis();
-  }
-
-  if (adcValue > 20)
-  {
-    if (millis() > (atHighMillis + 1500))
-    {
-      newAtZeroFlag = false;
-      tapCount = 0;
-    }
-    else
-    {
-      newAtZeroFlag = true;
-    }
-  }
-  return false;
-}
-
-bool UpdateMLX90640()
+// Get the temperature frame from the MLX90640.
+bool GetTemperatureFrame()
 {
   static bool statusFlag = true;
   static msTimer timeoutTimer(3000);
@@ -218,7 +173,7 @@ bool UpdateMLX90640()
   // Allow for x seconds of errors before flaging an error state.
   if (timeoutTimer.elapsed())
   {
-     statusFlag = false;
+    statusFlag = false;
   }
 
   int ret = mlx.getFrame(temperatureFrame);
@@ -228,10 +183,15 @@ bool UpdateMLX90640()
     return false;
   }
 
-  // Data received success: apply frame to led grid.
-
   statusFlag = true;
   timeoutTimer.resetDelay();
+
+  return statusFlag;
+}
+
+// Apply temperature frame to LED matrix.
+void ApplyTemperatureFrameToLEDs()
+{
   float minTemperature = 100.0f;
   float maxTemperature = 0;
 
@@ -267,9 +227,6 @@ bool UpdateMLX90640()
 
       // Set the color of the LEDs.
       leds[getIndexOfPixel(x, y)] = CRGB(redHeatColor[index], greenHeatColor[index], blueHeatColor[index]);
-
-      // Store temperature values.
-      cumTempInsideMatrix[GetMatrixIndexOfPixel(x, y)] += (int)round(temperature);
     }
   }
 
@@ -285,23 +242,42 @@ bool UpdateMLX90640()
   Serial.printf("Min temperature: %0.1f. Max temperature: %0.1f. Average temperature: %0.2f.\n", minTemperature, maxTemperature, avgTemperature);
 
   FastLED.show();
-  return statusFlag;
 }
 
+// Detect motion by reducing the entire matrix into 12 smaller matrix units and checking
+// for a change of temperature average as individual matrix units.
 bool DetectMotion()
 {
   static int curAvgTempInsideMatrix[12];
   static int prevAvgTempInsideMatrix[12];
+  int cumTempInsideMatrix[12];
   bool motionDetected = false;
 
-  // Calculator average temperature inside each matrix.
   for (int i = 0; i < 12; i++)
   {
-    curAvgTempInsideMatrix[i] = cumTempInsideMatrix[i] / (8 * 8);
     cumTempInsideMatrix[i] = 0;
   }
 
-  // Compare cur with prev temperature average.
+  for (uint8_t y = 0; y < 32; y++)
+  {
+    for (uint8_t x = 0; x < 24; x++)
+    {
+      // Rotate the camera pixels -90 degress and extract
+      // the pixels by the matrix represented as an array.
+      int xRotated = 32 - y;
+      int yRotated = x;
+      float temperature = temperatureFrame[xRotated + yRotated * 32];
+      cumTempInsideMatrix[GetMatrixIndexOfPixel(x, y)] += (int)round(temperature);
+    }
+  }
+
+  // Calculator the average temperature inside each matrix.
+  for (int i = 0; i < 12; i++)
+  {
+    curAvgTempInsideMatrix[i] = cumTempInsideMatrix[i] / (8 * 8);
+  }
+
+  // Compare cur with prev temperature averages.
   for (int i = 0; i < 12; i++)
   {
     int threasholdDelta = 1;
@@ -324,21 +300,19 @@ bool DetectMotion()
 }
 
 // Converts pixel index into maxtrix index.
-// See comments on other methods.
+
 int GetMatrixIndexOfPixel(int x, int y)
 {
-  const int w = 3;
-  const int h = 4;
-  const int pixelPerDim = 8;
+  const int w = 3;                 // Width of the average virtual matrix.
+  const int pixelPerDimension = 8; // Virtual matrix is 8 x 8.
 
-  int m = 12 - (int)((x / pixelPerDim) + ((y / pixelPerDim) * w));
-
+  int m = (x / pixelPerDimension) + ((y / pixelPerDimension) * w);
   return m;
 }
 
 void MatrixEffect()
 {
-  EVERY_N_MILLIS(75) // falling speed
+  EVERY_N_MILLIS(10) // falling speed
   {
     const CRGB spawnColor = CRGB(125, 255, 125);
 
@@ -401,7 +375,7 @@ uint16_t getIndexOfPixel(int x, int y)
   return pixel;
 }
 
-// Noise Effect Functions
+// Noise Effect Functions (provided by FASTLED library).
 void noiseEffect()
 {
   ChangePaletteAndSettingsPeriodically();
@@ -494,7 +468,7 @@ void ChangePaletteAndSettingsPeriodically()
 {
   static int noiseColors = 0;
 
-  EVERY_N_SECONDS(5)
+  EVERY_N_SECONDS(10)
   {
     noiseColors++;
     if (noiseColors > 8)
