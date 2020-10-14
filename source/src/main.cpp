@@ -1,15 +1,25 @@
-// InfraredHeatColor Mirror
-//
-// Displays infraredHeatColor camara image using a matrix of LEDs.
-//
-// Reuben Strangelove
-// Winter 2020
-//
-// MCU: Teensy 3.2 requiredHeatColor for speed and memory capacity.
-// SENSOR: Adafruit MLX90640 over I2C.
-//
-// Notes: Double tap brigthness pot into zero postion (min brightness) to
-//        enter into animation mode display noise effects on the led matrix.
+/*
+  Infrared Mirror
+
+  Displays an infrared camara image using a matrix of LEDs.
+
+  Reuben Strangelove
+  Winter 2020
+
+  MCU: Teensy 3.2 (required for speed, memory capacity, and library support).
+  SENSOR: Adafruit MLX90640 over I2C.
+
+  Notes: Double tap brightness pot into zero postion (min brightness) to
+          enter into animation mode that displays noise effects on the led matrix.
+
+          LED brightness limited in software due to LED panel overheating issues.
+
+
+  Library notes: In order to use 16hz refresh rate a line needed to be added to the MLX60640 library.
+                  on line 22 of Adafruit_MLX90640.cpp in the boolean Adafruit_MLX90640::begin() method, 
+                  add the follow line:
+                  wire->setClock(1000000); //1MHz I2C clock
+*/
 
 #include "Arduino.h"
 #include "SPI.h"
@@ -18,6 +28,7 @@
 #include <math.h>
 #include <FastLED.h>
 #include <main.h>
+#include <msTimer.h> // local library.
 
 // LED matrix and LED strips parameters.
 #define kMatrixWidth 24
@@ -32,7 +43,10 @@ CRGB leds[NUM_LEDS_IN_LED_MATRIX];
 #define PIN_BRIGHTNESS_POT A0
 
 Adafruit_NeoPixel stripNameplate = Adafruit_NeoPixel(NUM_LEDS_IN_NAMEPLATE, PIN_LED_STRIP_NAMEPLATE, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel stripMotion = Adafruit_NeoPixel(1, PIN_LED_STRIP_MOTION, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel stripMotion = Adafruit_NeoPixel(1, PIN_LED_STRIP_MOTION, NEO_RGB + NEO_KHZ800);
+
+// LED brightness
+#define MAX_LED_MATRIX_BRIGHTNESS 105 // Max brightness causes overheating issues with the LEDs and they burn out.
 
 // NoiseEffect parameters.
 #define MAX_DIMENSION ((kMatrixWidth > kMatrixHeight) ? kMatrixWidth : kMatrixHeight)
@@ -46,17 +60,23 @@ CRGBPalette16 currentPalette(PartyColors_p);
 Adafruit_MLX90640 mlx;
 float temperatureFrame[32 * 24];
 
-// Heat colors. (still needs tweaking)
+// Heat colors. Configured by trial and error for best visual effect, does not conform to data representation standards.
 const int redHeatColor[] = {0, 0, 0, 0, 0, 0, 16, 32, 64, 92, 127, 192, 252, 255, 255, 255, 255};
 const int greenHeatColor[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 192};
 const int blueHeatColor[] = {8, 16, 32, 64, 127, 192, 255, 192, 127, 64, 32, 0, 0, 0, 0, 127, 192};
+
+int cumTempInsideMatrix[12];
+
+#define RED 0xFF0000
+#define GREEN 0x00FF00
+#define BLUE 0x0000FF
+#define OFF 0x000000
 
 enum state
 {
   DisplayTemperature,
   DisplayAnimations
 } State;
-
 
 void setup()
 {
@@ -65,26 +85,26 @@ void setup()
   FastLED.show();
 
   stripNameplate.begin();
-  stripNameplate.setBrightness(127);
+  stripNameplate.setBrightness(185);
   stripNameplate.show();
 
   stripMotion.begin();
-  stripMotion.setBrightness(127);
+  stripMotion.setBrightness(60);
   stripMotion.show();
 
   Serial.begin(115200);
-  Serial.println("InfraredHeatColor Mirror startup...");
+  Serial.println("Infrared Mirror startup...");
+
+  delay(500);
 
   if (!mlx.begin(MLX90640_I2CADDR_DEFAULT, &Wire))
   {
     Serial.println("MLX90640 not found!");
     while (1)
     {
-      stripMotion.setPixelColor(0, Color(255, 0, 0));
-      stripMotion.show();
+      SetMotionLED(RED);
       delay(200);
-      stripMotion.setPixelColor(0, Color(0, 0, 0));
-      stripMotion.show();
+      SetMotionLED(OFF);
       delay(200);
     }
   }
@@ -92,25 +112,34 @@ void setup()
   Serial.println("Found Adafruit MLX90640.");
 
   mlx.setMode(MLX90640_CHESS);           // MLX90640_CHESS or MLX90640_INTERLEAVED
-  mlx.setResolution(MLX90640_ADC_18BIT); // 16, 17, 18, 19
-  mlx.setRefreshRate(MLX90640_16_HZ);    // Modification was requiredHeatColor in the library to increase I2C speed.
+  mlx.setResolution(MLX90640_ADC_16BIT); // 16, 17, 18, 19
+  mlx.setRefreshRate(MLX90640_16_HZ);    // Modification was required in the library to increase I2C speed, see top comments.
 
-  State = DisplayTemperature;
+  // State = DisplayAnimations; // TEMP
 
   // Start up name plate animation.
   for (int i = 0; i < NUM_LEDS_IN_NAMEPLATE; i++)
   {
     int colorIndex = i + 4;
-     stripNameplate.setPixelColor(NUM_LEDS_IN_NAMEPLATE - i - 1, Color(redHeatColor[colorIndex], greenHeatColor[colorIndex], blueHeatColor[colorIndex]));    
-     stripNameplate.show();
-      delay(75);
-  } 
+    stripNameplate.setPixelColor(NUM_LEDS_IN_NAMEPLATE - i - 1, Color(redHeatColor[colorIndex], greenHeatColor[colorIndex], blueHeatColor[colorIndex]));
+    stripNameplate.show();
+    delay(75);
+  }
 }
 
 void loop()
 {
+
+  static msTimer noMotionTimer(15000);
+
+  if (noMotionTimer.elapsed())
+  {
+    State = DisplayAnimations;
+  }
+
+  // Adjust LED matrix brightness by reference from user input potentiometer.
   int adcValue = 1023 - analogRead(PIN_BRIGHTNESS_POT);
-  int ledBrightness = map(adcValue, 0, 1024, 1, 255);
+  int ledBrightness = map(adcValue, 0, 1024, 1, MAX_LED_MATRIX_BRIGHTNESS);
   FastLED.setBrightness(ledBrightness);
 
   if (checkForTriggerActionOnPot(adcValue))
@@ -120,12 +149,28 @@ void loop()
 
   if (State == DisplayTemperature)
   {
-    UpdateMLX90640();
+    if (UpdateMLX90640())
+    {
+      if (DetectMotion())
+      {
+        SetMotionLED(GREEN);
+        noMotionTimer.resetDelay();
+      }
+      else
+      {
+        SetMotionLED(OFF);
+      }
+    }
+    else
+    {
+      // Error
+      SetMotionLED(RED);
+    }
   }
   else if (State == DisplayAnimations)
   {
-    // MatrixEffect();
-    noiseEffect();
+    MatrixEffect();
+    //noiseEffect();
   }
 }
 
@@ -168,22 +213,25 @@ bool checkForTriggerActionOnPot(int adcValue)
 bool UpdateMLX90640()
 {
   static bool statusFlag = true;
-  static unsigned int oldMillis;
+  static msTimer timeoutTimer(3000);
 
-  if (millis() > oldMillis + 3000)
+  // Allow for x seconds of errors before flaging an error state.
+  if (timeoutTimer.elapsed())
   {
-    statusFlag = false;
+     statusFlag = false;
   }
 
-  if (mlx.getFrame(temperatureFrame) != 0)
+  int ret = mlx.getFrame(temperatureFrame);
+  if (ret != 0)
   {
-    return statusFlag;
+    Serial.printf("MLX90640 error: %d\n", ret);
+    return false;
   }
 
   // Data received success: apply frame to led grid.
 
   statusFlag = true;
-  oldMillis = millis();
+  timeoutTimer.resetDelay();
   float minTemperature = 100.0f;
   float maxTemperature = 0;
 
@@ -191,7 +239,6 @@ bool UpdateMLX90640()
   {
     for (uint8_t x = 0; x < 24; x++)
     {
-
       // Rotate the camera pixels -90 degress and extract
       // the pixels by the matrix represented as an array.
       int xRotated = 32 - y;
@@ -218,16 +265,75 @@ bool UpdateMLX90640()
         index = 16;
       }
 
+      // Set the color of the LEDs.
       leds[getIndexOfPixel(x, y)] = CRGB(redHeatColor[index], greenHeatColor[index], blueHeatColor[index]);
+
+      // Store temperature values.
+      cumTempInsideMatrix[GetMatrixIndexOfPixel(x, y)] += (int)round(temperature);
     }
   }
 
-  // Serial.print(minTemperature);
-  // Serial.print(" | ");
-  // Serial.println(maxTemperature);
+  // Calculate average temperature.
+  float avgTemperature;
+  float cumTemperature = 0;
+  for (int i = 0; i < 32 * 24; i++)
+  {
+    cumTemperature += temperatureFrame[i];
+  }
+  avgTemperature = cumTemperature / (32 * 24);
+
+  Serial.printf("Min temperature: %0.1f. Max temperature: %0.1f. Average temperature: %0.2f.\n", minTemperature, maxTemperature, avgTemperature);
 
   FastLED.show();
   return statusFlag;
+}
+
+bool DetectMotion()
+{
+  static int curAvgTempInsideMatrix[12];
+  static int prevAvgTempInsideMatrix[12];
+  bool motionDetected = false;
+
+  // Calculator average temperature inside each matrix.
+  for (int i = 0; i < 12; i++)
+  {
+    curAvgTempInsideMatrix[i] = cumTempInsideMatrix[i] / (8 * 8);
+    cumTempInsideMatrix[i] = 0;
+  }
+
+  // Compare cur with prev temperature average.
+  for (int i = 0; i < 12; i++)
+  {
+    int threasholdDelta = 1;
+
+    // Serial.printf("%u - %u - %u - %u\n", i, threasholdDelta, prevAvgTempInsideMatrix[i], curAvgTempInsideMatrix[i]);
+
+    if (prevAvgTempInsideMatrix[i] + threasholdDelta < curAvgTempInsideMatrix[i])
+      motionDetected = true;
+    if (prevAvgTempInsideMatrix[i] - threasholdDelta > curAvgTempInsideMatrix[i])
+      motionDetected = true;
+  }
+
+  // Store cur as prev temperature average.
+  for (int i = 0; i < 12; i++)
+  {
+    prevAvgTempInsideMatrix[i] = curAvgTempInsideMatrix[i];
+  }
+
+  return motionDetected;
+}
+
+// Converts pixel index into maxtrix index.
+// See comments on other methods.
+int GetMatrixIndexOfPixel(int x, int y)
+{
+  const int w = 3;
+  const int h = 4;
+  const int pixelPerDim = 8;
+
+  int m = 12 - (int)((x / pixelPerDim) + ((y / pixelPerDim) * w));
+
+  return m;
 }
 
 void MatrixEffect()
@@ -273,7 +379,7 @@ void MatrixEffect()
 // x/y cordinates of the data to be displated are expected to start in the upper left corner
 // and end in the lower right corner.
 // Matrix of matrix consists of 12 8x8 LED matrix.
-// Matrix order (11 upper left, 0 lower right):
+// LED Matrix order (11 upper left, 0 lower right):
 // 11  10   9
 //  8   7   6
 //  5   4   3
@@ -298,7 +404,6 @@ uint16_t getIndexOfPixel(int x, int y)
 // Noise Effect Functions
 void noiseEffect()
 {
-
   ChangePaletteAndSettingsPeriodically();
 
   // The 16 bit version of our coordinates
@@ -398,63 +503,63 @@ void ChangePaletteAndSettingsPeriodically()
     if (noiseColors == 0)
     {
       currentPalette = RainbowColors_p;
-      speed = 15;
+      speed = 5;
       scale = 30;
       colorLoop = 1;
     }
     else if (noiseColors == 1)
     {
       SetupPurpleAndGreenPalette();
-      speed = 15;
+      speed = 5;
       scale = 50;
       colorLoop = 1;
     }
     else if (noiseColors == 2)
     {
       currentPalette = CloudColors_p;
-      speed = 15;
+      speed = 5;
       scale = 30;
       colorLoop = 0;
     }
     else if (noiseColors == 3)
     {
       currentPalette = LavaColors_p;
-      speed = 15;
+      speed = 5;
       scale = 50;
       colorLoop = 0;
     }
     else if (noiseColors == 4)
     {
       currentPalette = PartyColors_p;
-      speed = 15;
+      speed = 5;
       scale = 30;
       colorLoop = 1;
     }
     else if (noiseColors == 5)
     {
       SetupRandomPalette();
-      speed = 15;
+      speed = 5;
       scale = 20;
       colorLoop = 1;
     }
     else if (noiseColors == 6)
     {
       SetupRandomPalette();
-      speed = 15;
+      speed = 5;
       scale = 50;
       colorLoop = 1;
     }
     else if (noiseColors == 7)
     {
       SetupRandomPalette();
-      speed = 50;
+      speed = 20;
       scale = 90;
       colorLoop = 1;
     }
     else if (noiseColors == 8)
     {
       currentPalette = RainbowStripeColors_p;
-      speed = 15;
+      speed = 5;
       scale = 20;
       colorLoop = 1;
     }
@@ -475,7 +580,7 @@ void SetupRandomPalette()
       CHSV(random8(), 255, 255));
 }
 
-// This function sets up a palette of purple and greenHeatColor stripes.
+// This function sets up a palette of purple and green stripes.
 void SetupPurpleAndGreenPalette()
 {
   CRGB purple = CHSV(HUE_PURPLE, 255, 255);
@@ -493,4 +598,43 @@ void SetupPurpleAndGreenPalette()
 uint32_t Color(uint8_t r, uint8_t g, uint8_t b)
 {
   return (uint32_t)((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+}
+
+void SetMotionLED(uint32_t color)
+{
+  stripMotion.setPixelColor(0, color);
+  stripMotion.show();
+}
+
+void PrintRefeshRate()
+{
+  mlx90640_refreshrate_t rate = mlx.getRefreshRate();
+  Serial.print("MLX90640 refresh rate: ");
+  switch (rate)
+  {
+  case MLX90640_0_5_HZ:
+    Serial.println("0.5 Hz");
+    break;
+  case MLX90640_1_HZ:
+    Serial.println("1 Hz");
+    break;
+  case MLX90640_2_HZ:
+    Serial.println("2 Hz");
+    break;
+  case MLX90640_4_HZ:
+    Serial.println("4 Hz");
+    break;
+  case MLX90640_8_HZ:
+    Serial.println("8 Hz");
+    break;
+  case MLX90640_16_HZ:
+    Serial.println("16 Hz");
+    break;
+  case MLX90640_32_HZ:
+    Serial.println("32 Hz");
+    break;
+  case MLX90640_64_HZ:
+    Serial.println("64 Hz");
+    break;
+  }
 }
