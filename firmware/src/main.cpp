@@ -13,10 +13,10 @@
 
   Notes: 
     LED brightness limited in software due to LED panel overheating issues.
-    Animation mode is clunky (low FPS) due to slow nature MLX60640 functionality.
+    Animation mode is limited in FPS due to MLX60640 cycle intensive functionality.
     The MLX90640 library is only able to achive a 16hz refresh rate.
 
-  Library notes: 
+  Library modifications: 
     In order to use 16hz refresh rate a line needed to be added to the MLX60640 library.
     on line 22 of Adafruit_MLX90640.cpp in the boolean Adafruit_MLX90640::begin() method, 
     add the follow line:
