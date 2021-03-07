@@ -6,7 +6,7 @@
   Displays an infrared camara image using a matrix of LEDs.
 
   MCU: 
-    Teensy 3.2 (required for speed, memory capacity, and library support).
+    Teensy 3.2 (used for speed, memory capacity, and library support).
   
   IR Sensor: 
     Adafruit MLX90640 over I2C.
