@@ -20,7 +20,7 @@
     In order to use 16hz refresh rate a line needed to be added to the MLX60640 library.
     on line 22 of Adafruit_MLX90640.cpp in the boolean Adafruit_MLX90640::begin() method, 
     add the follow line:
-    wire->setClock(1000000); // 1MHz I2C clock
+    wire->setClock(1000000); // 1MHz I2C clock 
 */
 
 #include "Arduino.h"
@@ -28,7 +28,8 @@
 #include <Adafruit_MLX90640.h> // https://github.com/adafruit/Adafruit_MLX90640
 #include <Adafruit_NeoPixel.h>
 #include <math.h>
-#include <FastLED.h>          // https://github.com/FastLED/FastLED
+#include <FastLED.h>         // https://github.com/FastLED/FastLED
+#include "TeensyTimerTool.h" // https://github.com/luni64/TeensyTimerTool
 #include <main.h>
 #include <msTimer.h> // local library.
 
@@ -49,6 +50,10 @@ Adafruit_NeoPixel stripMotion = Adafruit_NeoPixel(1, PIN_LED_STRIP_MOTION, NEO_R
 
 // LED brightness
 const int maxLedMatrixBrightness = 105; // Max brightness causes overheating issues with the LEDs and they burn out.
+
+// Timer.
+using namespace TeensyTimerTool;
+Timer tickTimer; // generate a timer from the pool (Pool: 2xGPT, 16xTMR(QUAD), 20xTCK)
 
 // NoiseEffect parameters.
 #define MAX_DIMENSION ((kMatrixWidth > kMatrixHeight) ? kMatrixWidth : kMatrixHeight)
@@ -124,6 +129,8 @@ void setup()
     stripNameplate.show();
     delay(75);
   }
+
+  tickTimer.beginPeriodic(TickTimerCallback, 100000); // microseconds.
 }
 
 void loop()
@@ -163,6 +170,14 @@ void loop()
   else if (State == DisplayAnimations)
   {
     //MatrixEffect();
+    //noiseEffect();
+  }
+}
+
+void TickTimerCallback()
+{
+  if (State == DisplayAnimations)
+  {
     noiseEffect();
   }
 }
@@ -204,7 +219,7 @@ void ApplyTemperatureFrameToLEDs()
     {
       // Rotate the camera pixels -90 degress and extract
       // the pixels by the matrix represented as an array.
-      int xRotated = 32 - y;
+      int xRotated = 31 - y;
       int yRotated = x;
       float temperature = temperatureFrame[xRotated + yRotated * 32];
 
@@ -229,7 +244,7 @@ void ApplyTemperatureFrameToLEDs()
       }
 
       // Set the color of the LEDs.
-      leds[getIndexOfPixel(x, y)] = CRGB(redHeatColor[index], greenHeatColor[index], blueHeatColor[index]);
+      leds[GetIndexOfPixel(x, y)] = CRGB(redHeatColor[index], greenHeatColor[index], blueHeatColor[index]);
     }
   }
 
@@ -325,11 +340,11 @@ void MatrixEffect()
     {
       for (int8_t col = 0; col < kMatrixWidth; col++)
       {
-        if (leds[getIndexOfPixel(col, row)] == spawnColor)
+        if (leds[GetIndexOfPixel(col, row)] == spawnColor)
         {
-          leds[getIndexOfPixel(col, row)] = CRGB(27, 130, 39); // create trail
+          leds[GetIndexOfPixel(col, row)] = CRGB(27, 130, 39); // create trail
           if (row < kMatrixHeight - 1)
-            leds[getIndexOfPixel(col, row + 1)] = spawnColor;
+            leds[GetIndexOfPixel(col, row + 1)] = spawnColor;
         }
       }
     }
@@ -345,15 +360,15 @@ void MatrixEffect()
     if (random8(3) == 0) // lower number == more frequent spawns
     {
       int8_t spawnX = random8(kMatrixWidth);
-      leds[getIndexOfPixel(spawnX, 0)] = spawnColor;
+      leds[GetIndexOfPixel(spawnX, 0)] = spawnColor;
     }
 
     FastLED.show();
   }
 }
 
-// Convert x/y cordinates into pixel index inside the matrix of matrix.
-// x/y cordinates of the data to be displated are expected to start in the upper left corner
+// Convert x/y cordinates into pixel index (location on chain of pixels) inside the matrix of matrix.
+// x/y cordinates of the data to be displayed are expected to start in the upper left corner
 // and end in the lower right corner.
 // Matrix of matrix consists of 12 8x8 LED matrix.
 // LED Matrix order (11 upper left, 0 lower right):
@@ -363,9 +378,8 @@ void MatrixEffect()
 //  2   1   0
 // Pixels start on the lower right of each matrix and end in the upper left.
 // LEDs within the 8x8 matrix do not zig-zag.
-uint16_t getIndexOfPixel(int x, int y)
+uint16_t GetIndexOfPixel(int x, int y)
 {
-
   int xMatrix = x / 8;
   int yMatrix = y / 8;
   int matrixIndex = 11 - (xMatrix + 3 * yMatrix);
@@ -373,7 +387,7 @@ uint16_t getIndexOfPixel(int x, int y)
   // inside matrix x, y
   int xL = 7 - (x % 8);
   int yL = 7 - (y % 8);
-  uint16_t pixel = (uint16_t)(64 * matrixIndex + (xL + (8 * yL)));
+  uint16_t pixel = (uint16_t)((64 * matrixIndex) + (xL + (8 * yL)));
 
   return pixel;
 }
@@ -458,7 +472,7 @@ void mapNoiseToLEDsUsingPalette()
       }
 
       CRGB color = ColorFromPalette(currentPalette, index, bri);
-      leds[getIndexOfPixel(i, j)] = color;
+      leds[GetIndexOfPixel(i, j)] = color;
     }
   }
 

@@ -1,11 +1,13 @@
 bool GetTemperatureFrame();
 void ApplyTemperatureFrameToLEDs();
-uint16_t getIndexOfPixel(int x, int y);
+uint16_t GetIndexOfPixel(int x, int y);
 int GetMatrixIndexOfPixel(int x, int y);
 bool DetectMotion();
 void SetMotionLED(uint32_t color);
 void PrintRefeshRate();
 uint32_t Color(uint8_t r, uint8_t g, uint8_t b);
+
+void TickTimerCallback();
 
 // Noise Effect Functions
 void noiseEffect();
@@ -15,3 +17,4 @@ void SetupRandomPalette();
 void SetupPurpleAndGreenPalette();
 
 void MatrixEffect();
+
