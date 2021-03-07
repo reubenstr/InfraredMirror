@@ -1,23 +1,26 @@
 /*
   Infrared Mirror
-
-  Displays an infrared camara image using a matrix of LEDs.
-
   Reuben Strangelove
   Winter 2020
 
-  MCU: Teensy 3.2 (required for speed, memory capacity, and library support).
-  SENSOR: Adafruit MLX90640 over I2C.
+  Displays an infrared camara image using a matrix of LEDs.
 
-  Notes: LED brightness limited in software due to LED panel overheating issues.
-         Animation mode is clunky (low FPS) due to blocking nature of getting the temperature frame.
-         The MLX90640 library is only able to achive a 16hz refresh rate.
+  MCU: 
+    Teensy 3.2 (required for speed, memory capacity, and library support).
+  
+  IR Sensor: 
+    Adafruit MLX90640 over I2C.
 
+  Notes: 
+    LED brightness limited in software due to LED panel overheating issues.
+    Animation mode is clunky (low FPS) due to slow nature MLX60640 functionality.
+    The MLX90640 library is only able to achive a 16hz refresh rate.
 
-  Library notes: In order to use 16hz refresh rate a line needed to be added to the MLX60640 library.
-                  on line 22 of Adafruit_MLX90640.cpp in the boolean Adafruit_MLX90640::begin() method, 
-                  add the follow line:
-                  wire->setClock(1000000); //1MHz I2C clock
+  Library notes: 
+    In order to use 16hz refresh rate a line needed to be added to the MLX60640 library.
+    on line 22 of Adafruit_MLX90640.cpp in the boolean Adafruit_MLX90640::begin() method, 
+    add the follow line:
+    wire->setClock(1000000); // 1MHz I2C clock
 */
 
 #include "Arduino.h"
@@ -25,27 +28,27 @@
 #include <Adafruit_MLX90640.h> // https://github.com/adafruit/Adafruit_MLX90640
 #include <Adafruit_NeoPixel.h>
 #include <math.h>
-#include <FastLED.h>
+#include <FastLED.h>          // https://github.com/FastLED/FastLED
 #include <main.h>
 #include <msTimer.h> // local library.
-
-// LED matrix and LED strips parameters.
-#define kMatrixWidth 24
-#define kMatrixHeight 32
-#define NUM_LEDS_IN_LED_MATRIX 768
-CRGB leds[NUM_LEDS_IN_LED_MATRIX];
-#define NUM_LEDS_IN_NAMEPLATE 12
 
 #define PIN_LED_STRIP_GRID 8
 #define PIN_LED_STRIP_NAMEPLATE 9
 #define PIN_LED_STRIP_MOTION 10
 #define PIN_BRIGHTNESS_POT A0
 
-Adafruit_NeoPixel stripNameplate = Adafruit_NeoPixel(NUM_LEDS_IN_NAMEPLATE, PIN_LED_STRIP_NAMEPLATE, NEO_GRB + NEO_KHZ800);
+// LED matrix and LED strips parameters.
+const int kMatrixWidth = 24;
+const int kMatrixHeight = 32;
+const int numLedsInWholeMatrix = 768;
+const int numLedsInNamePlate = 12;
+
+CRGB leds[numLedsInWholeMatrix];
+Adafruit_NeoPixel stripNameplate = Adafruit_NeoPixel(numLedsInNamePlate, PIN_LED_STRIP_NAMEPLATE, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel stripMotion = Adafruit_NeoPixel(1, PIN_LED_STRIP_MOTION, NEO_RGB + NEO_KHZ800);
 
 // LED brightness
-#define MAX_LED_MATRIX_BRIGHTNESS 105 // Max brightness causes overheating issues with the LEDs and they burn out.
+const int maxLedMatrixBrightness = 105; // Max brightness causes overheating issues with the LEDs and they burn out.
 
 // NoiseEffect parameters.
 #define MAX_DIMENSION ((kMatrixWidth > kMatrixHeight) ? kMatrixWidth : kMatrixHeight)
@@ -77,7 +80,7 @@ enum state
 
 void setup()
 {
-  FastLED.addLeds<NEOPIXEL, PIN_LED_STRIP_GRID>(leds, NUM_LEDS_IN_LED_MATRIX).setDither(0);
+  FastLED.addLeds<NEOPIXEL, PIN_LED_STRIP_GRID>(leds, numLedsInWholeMatrix).setDither(0);
   FastLED.setBrightness(0);
   FastLED.show();
 
@@ -132,9 +135,9 @@ void loop()
     State = DisplayAnimations;
   }
 
-  // Adjust LED matrix brightness by reference from user input potentiometer.
+  // Adjust LED matrix brightness by from user input potentiometer.
   int adcValue = 1023 - analogRead(PIN_BRIGHTNESS_POT);
-  int ledBrightness = map(adcValue, 0, 1024, 1, MAX_LED_MATRIX_BRIGHTNESS);
+  int ledBrightness = map(adcValue, 0, 1024, 1, maxLedMatrixBrightness);
   FastLED.setBrightness(ledBrightness);
 
   if (!GetTemperatureFrame())
@@ -332,7 +335,7 @@ void MatrixEffect()
     }
 
     // fade all leds
-    for (int i = 0; i < NUM_LEDS_IN_LED_MATRIX; i++)
+    for (int i = 0; i < numLedsInWholeMatrix; i++)
     {
       if (leds[i].g != spawnColor.g)
         leds[i].nscale8(192); // only fade trail
