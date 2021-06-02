@@ -147,6 +147,7 @@ void loop()
   int ledBrightness = map(adcValue, 0, 1024, 1, maxLedMatrixBrightness);
   FastLED.setBrightness(ledBrightness);
 
+  // GetTemperatureFrame() is a blocking method method.
   if (!GetTemperatureFrame())
   {
     SetMotionLED(RED);
@@ -166,12 +167,7 @@ void loop()
   if (State == DisplayTemperature)
   {
     ApplyTemperatureFrameToLEDs();
-  }
-  else if (State == DisplayAnimations)
-  {
-    //MatrixEffect();
-    //noiseEffect();
-  }
+  }  
 }
 
 void TickTimerCallback()
@@ -179,6 +175,9 @@ void TickTimerCallback()
   if (State == DisplayAnimations)
   {
     noiseEffect();
+    
+    // Optional effect.
+    // MatrixEffect();
   }
 }
 
@@ -232,7 +231,7 @@ void ApplyTemperatureFrameToLEDs()
       if (maxTemperature < temperature)
         maxTemperature = temperature;
 
-      // Convert temperature into heat color index.
+      // Convert temperature into heat colors.
       int index = round(temperature - 20);
       if (index < 0)
       {
@@ -318,7 +317,7 @@ bool DetectMotion()
 }
 
 // Converts pixel index into maxtrix index.
-
+// The index represents on of the 12 LED matrix (physical 8x8 LED PCBs).
 int GetMatrixIndexOfPixel(int x, int y)
 {
   const int w = 3;                 // Width of the average virtual matrix.
@@ -328,6 +327,7 @@ int GetMatrixIndexOfPixel(int x, int y)
   return m;
 }
 
+// Optional Matrix (movie) falling rain animation.
 void MatrixEffect()
 {
   EVERY_N_MILLIS(10) // falling speed
@@ -335,7 +335,6 @@ void MatrixEffect()
     const CRGB spawnColor = CRGB(125, 255, 125);
 
     // move code downward
-    // start with lowest row to allow proper overlapping on each column
     for (int8_t row = kMatrixHeight - 1; row >= 0; row--)
     {
       for (int8_t col = 0; col < kMatrixWidth; col++)
